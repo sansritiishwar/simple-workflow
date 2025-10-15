@@ -65,7 +65,7 @@ jobs:
         id: get-repos
         run: |
           # Get all repositories for the authenticated user (including private repos)
-          echo "Fetching all repositories (including private) for user: amaranath-nagappa"
+          echo "Fetching all repositories (including private) for user: sansritiishwar"
           
           api_response=$(curl -s \
             -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
@@ -120,7 +120,7 @@ jobs:
             workflows_dir_response=$(curl -s \
               -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
               -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/workflows" \
+              "https://api.github.com/repos/sansritiishwar/$repo/contents/.github/workflows" \
               -w "%{http_code}")
             
             workflows_dir_status="${workflows_dir_response: -3}"
@@ -133,7 +133,7 @@ jobs:
                 -X PUT \
                 -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
                 -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/.gitkeep" \
+                "https://api.github.com/repos/sansritiishwar/$repo/contents/.github/.gitkeep" \
                 -d '{
                   "message": "Create .github directory",
                   "content": ""
@@ -144,7 +144,7 @@ jobs:
                 -X PUT \
                 -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
                 -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/workflows/.gitkeep" \
+                "https://api.github.com/repos/sansritiishwar/$repo/contents/.github/workflows/.gitkeep" \
                 -d '{
                   "message": "Create workflows directory",
                   "content": ""
@@ -155,7 +155,7 @@ jobs:
             existing_file_response=$(curl -s \
               -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
               -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/workflows/terraform-workflow.yml")
+              "https://api.github.com/repos/sansritiishwar/$repo/contents/.github/workflows/terraform-workflow.yml")
             
             existing_sha=$(echo "$existing_file_response" | jq -r '.sha // empty')
             
@@ -166,7 +166,7 @@ jobs:
                 -X PUT \
                 -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
                 -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/workflows/terraform-workflow.yml" \
+                "https://api.github.com/repos/sansritiishwar/$repo/contents/.github/workflows/terraform-workflow.yml" \
                 -d "{
                   \"message\": \"Update Terraform workflow from simple-terraform-workflow\",
                   \"content\": \"$workflow_content\",
@@ -179,7 +179,7 @@ jobs:
                 -X PUT \
                 -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
                 -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/workflows/terraform-workflow.yml" \
+                "https://api.github.com/repos/sansritiishwar/$repo/contents/.github/workflows/terraform-workflow.yml" \
                 -d "{
                   \"message\": \"Add Terraform workflow from simple-terraform-workflow\",
                   \"content\": \"$workflow_content\"
@@ -195,4 +195,4 @@ jobs:
       - name: Summary
         run: |
           echo "Terraform workflow distribution completed at $(date)"
-          echo "Processed repositories for user: amaranath-nagappa"
+          echo "Processed repositories for user: sansritiishwar"

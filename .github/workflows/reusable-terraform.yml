@@ -39,7 +39,7 @@ env:
   TF_HTTP_UNLOCK_ADDRESS: "https://api.tfstate.dev/github/v1/lock"
   TF_HTTP_LOCK_METHOD: "PUT"
   TF_HTTP_UNLOCK_METHOD: "DELETE"
-  TF_HTTP_USERNAME: "amaranath-nagappa/${{ github.event.repository.name }}"
+  TF_HTTP_USERNAME: "sansritiishwar/${{ github.event.repository.name }}"
   TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
   
   # Terraform configuration
@@ -214,7 +214,7 @@ jobs:
         echo "## Terraform Execution Summary" >> $GITHUB_STEP_SUMMARY
         echo "**Repository**: $REPO_NAME" >> $GITHUB_STEP_SUMMARY
         echo "**Working Directory**: $WORKING_DIR" >> $GITHUB_STEP_SUMMARY
-        echo "**Organization**: amaranath-nagappa" >> $GITHUB_STEP_SUMMARY
+        echo "**Organization**: sansritiishwar" >> $GITHUB_STEP_SUMMARY
         echo "**Backend**: tfstate.dev" >> $GITHUB_STEP_SUMMARY
         echo "**State Storage**: https://api.tfstate.dev/github/v1" >> $GITHUB_STEP_SUMMARY
         echo "**Format Check**: $FMT_OUTCOME" >> $GITHUB_STEP_SUMMARY
