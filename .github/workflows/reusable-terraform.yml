@@ -1,0 +1,227 @@
+name: Reusable Terraform Workflow
+
+on:
+  workflow_call:
+    inputs:
+      terraform_version:
+        description: 'Terraform version to use'
+        required: false
+        type: string
+        default: 'latest'
+      working_directory:
+        description: 'Directory containing Terraform files'
+        required: false
+        type: string
+        default: '.'
+    secrets:
+      AWS_ROLE_ARN:
+        description: 'AWS IAM role ARN for authentication'
+        required: false
+      AWS_REGION:
+        description: 'AWS region'
+        required: false
+      AZURE_CREDENTIALS:
+        description: 'Azure service principal credentials'
+        required: false
+      GCP_CREDENTIALS:
+        description: 'Google Cloud service account credentials'
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+env:
+  # tfstate.dev configuration
+  TF_HTTP_ADDRESS: "https://api.tfstate.dev/github/v1"
+  TF_HTTP_LOCK_ADDRESS: "https://api.tfstate.dev/github/v1/lock"
+  TF_HTTP_UNLOCK_ADDRESS: "https://api.tfstate.dev/github/v1/lock"
+  TF_HTTP_LOCK_METHOD: "PUT"
+  TF_HTTP_UNLOCK_METHOD: "DELETE"
+  TF_HTTP_USERNAME: "amaranath-nagappa/${{ github.event.repository.name }}"
+  TF_HTTP_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+  
+  # Terraform configuration
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform_version }}
+
+    # AWS Authentication
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      if: contains(github.repository, 'aws') || contains(github.event.head_commit.message, 'aws')
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        role-session-name: GitHubActions-${{ github.run_id }}
+        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+      continue-on-error: true
+
+    # Azure Authentication
+    - name: Azure Login
+      uses: azure/login@v1
+      if: contains(github.repository, 'azure') || contains(github.event.head_commit.message, 'azure')
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+      continue-on-error: true
+
+    # Google Cloud Authentication
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      if: contains(github.repository, 'gcp') || contains(github.repository, 'google') || contains(github.event.head_commit.message, 'gcp')
+      with:
+        credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+      continue-on-error: true
+
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      if: contains(github.repository, 'gcp') || contains(github.repository, 'google') || contains(github.event.head_commit.message, 'gcp')
+      continue-on-error: true
+
+    # Create Terraform backend configuration dynamically
+    - name: Create Terraform Backend Configuration
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        cat > backend.tf << EOF
+        terraform {
+          backend "http" {
+            address        = "${{ env.TF_HTTP_ADDRESS }}"
+            lock_address   = "${{ env.TF_HTTP_LOCK_ADDRESS }}"
+            unlock_address = "${{ env.TF_HTTP_UNLOCK_ADDRESS }}"
+            lock_method    = "${{ env.TF_HTTP_LOCK_METHOD }}"
+            unlock_method  = "${{ env.TF_HTTP_UNLOCK_METHOD }}"
+            username       = "${{ env.TF_HTTP_USERNAME }}"
+          }
+        }
+        EOF
+        echo "Created backend configuration for repository: ${{ github.event.repository.name }}"
+
+    # Terraform Init
+    - name: Terraform Init
+      id: init
+      working-directory: ${{ inputs.working_directory }}
+      run: terraform init -upgrade
+      continue-on-error: false
+
+    # Terraform Format Check
+    - name: Terraform Format Check
+      id: fmt
+      working-directory: ${{ inputs.working_directory }}
+      run: terraform fmt -check -recursive
+      continue-on-error: true
+
+    # Terraform Validate
+    - name: Terraform Validate
+      id: validate
+      working-directory: ${{ inputs.working_directory }}
+      run: terraform validate -no-color
+
+    # Terraform Plan
+    - name: Terraform Plan
+      id: plan
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        terraform plan -detailed-exitcode -no-color -out=tfplan
+      continue-on-error: false
+
+    # Save Plan Output for PR Comments
+    - name: Save Plan Output
+      if: github.event_name == 'pull_request'
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        terraform show -no-color tfplan > plan_output.txt
+
+    # Comment on PR with Plan
+    - name: Comment PR with Plan
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const planFile = path.join('${{ inputs.working_directory }}', 'plan_output.txt');
+          const plan = fs.readFileSync(planFile, 'utf8');
+          const maxGitHubBodyCharacters = 65536;
+          
+          function chunkSubstr(str, size) {
+            const numChunks = Math.ceil(str.length / size)
+            const chunks = new Array(numChunks)
+            for (let i = 0, o = 0; i < numChunks; ++i, o += size) {
+              chunks[i] = str.substr(o, size)
+            }
+            return chunks
+          }
+          
+          const planChunks = chunkSubstr(plan, maxGitHubBodyCharacters);
+          
+          for (let i = 0; i < planChunks.length; i++) {
+            const output = `
+          ## Terraform Plan Output ${planChunks.length > 1 ? `(${i + 1}/${planChunks.length})` : ''}
+          
+          **Repository**: ${{ github.event.repository.name }}
+          **Working Directory**: ${{ inputs.working_directory }}
+          **Backend**: tfstate.dev
+          **Format Check**: \`${{ steps.fmt.outcome }}\`
+          **Validation**: \`${{ steps.validate.outcome }}\`
+          **Plan**: \`${{ steps.plan.outcome }}\`
+          
+          <details><summary>Show Plan</summary>
+          
+          \`\`\`
+          ${planChunks[i]}
+          \`\`\`
+          
+          </details>
+          `;
+          
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+          }
+
+    # Terraform Apply (only on main/master branch)
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      working-directory: ${{ inputs.working_directory }}
+      run: terraform apply -auto-approve tfplan
+
+    # Output Summary
+    - name: Output Summary
+      env:
+        REPO_NAME: ${{ github.event.repository.name }}
+        WORKING_DIR: ${{ inputs.working_directory }}
+        FMT_OUTCOME: ${{ steps.fmt.outcome }}
+        VALIDATE_OUTCOME: ${{ steps.validate.outcome }}
+        PLAN_OUTCOME: ${{ steps.plan.outcome }}
+        GIT_REF: ${{ github.ref }}
+      run: |
+        echo "## Terraform Execution Summary" >> $GITHUB_STEP_SUMMARY
+        echo "**Repository**: $REPO_NAME" >> $GITHUB_STEP_SUMMARY
+        echo "**Working Directory**: $WORKING_DIR" >> $GITHUB_STEP_SUMMARY
+        echo "**Organization**: amaranath-nagappa" >> $GITHUB_STEP_SUMMARY
+        echo "**Backend**: tfstate.dev" >> $GITHUB_STEP_SUMMARY
+        echo "**State Storage**: https://api.tfstate.dev/github/v1" >> $GITHUB_STEP_SUMMARY
+        echo "**Format Check**: $FMT_OUTCOME" >> $GITHUB_STEP_SUMMARY
+        echo "**Validation**: $VALIDATE_OUTCOME" >> $GITHUB_STEP_SUMMARY
+        echo "**Plan**: $PLAN_OUTCOME" >> $GITHUB_STEP_SUMMARY
+        if [ "$GIT_REF" == "refs/heads/main" ] || [ "$GIT_REF" == "refs/heads/master" ]; then
+          echo "**Apply**: Executed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "**Apply**: Skipped (not main/master branch)" >> $GITHUB_STEP_SUMMARY
+        fi

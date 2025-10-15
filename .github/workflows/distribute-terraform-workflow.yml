@@ -1,0 +1,198 @@
+name: Distribute Terraform Workflow
+
+on:
+  #schedule:
+    # Avoid peak times (start of hour) and use specific minutes
+    #- cron: '3,8,13,18,23,28,33,38,43,48,53,58 * * * *'  # Every 5 minutes, offset from peak times
+  workflow_dispatch:
+    # Allow manual triggering
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/distribute-terraform-workflow.yml'
+      - 'terraform-workflow.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  distribute-workflow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Debug trigger information
+        run: |
+          echo "Workflow triggered by: ${{ github.event_name }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.ref }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Default branch: ${{ github.event.repository.default_branch }}"
+          echo "Current UTC time: $(date -u)"
+          echo "Current time: $(date)"
+          echo "Next 5-minute marks: $(date -u -d '+5 minutes' '+%H:%M'), $(date -u -d '+10 minutes' '+%H:%M'), $(date -u -d '+15 minutes' '+%H:%M')"
+          
+          # Check if this is running on default branch
+          if [ "${{ github.ref }}" = "refs/heads/${{ github.event.repository.default_branch }}" ]; then
+            echo "✅ Running on default branch"
+          else
+            echo "❌ NOT running on default branch - scheduled workflows only work on default branch!"
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Keep repository active (prevent 60-day suspension)
+        if: github.event_name == 'schedule'
+        run: |
+          # GitHub disables scheduled workflows after 60 days of inactivity
+          # This step keeps the repository "active" to prevent suspension
+          
+          echo "Last scheduled run: $(date -u)" > .github/last-scheduled-run.txt
+          
+          git config user.name "GitHub Actions Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/last-scheduled-run.txt
+          
+          if ! git diff --staged --quiet; then
+            git commit -m "Keep repository active for scheduled workflows [automated]"
+            git push
+            echo "✅ Repository activity updated to prevent workflow suspension"
+          else
+            echo "ℹ️ No changes to commit"
+          fi
+
+      - name: Get user repositories
+        id: get-repos
+        run: |
+          # Get all repositories for the authenticated user (including private repos)
+          echo "Fetching all repositories (including private) for user: amaranath-nagappa"
+          
+          api_response=$(curl -s \
+            -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/user/repos?per_page=100&visibility=all")
+          
+          echo "API Response:"
+          echo "$api_response"
+          
+          # Check if the response contains an error
+          if echo "$api_response" | jq -e '.message' > /dev/null 2>&1; then
+            echo "Error from GitHub API:"
+            echo "$api_response" | jq -r '.message'
+            exit 1
+          fi
+          
+          # Check if response is an array
+          if ! echo "$api_response" | jq -e 'type == "array"' > /dev/null 2>&1; then
+            echo "Unexpected API response format. Expected array, got:"
+            echo "$api_response" | jq -r 'type'
+            exit 1
+          fi
+          
+          # Extract repository names
+          repos=$(echo "$api_response" | jq -r '.[].name')
+          
+          echo "Found repositories:"
+          echo "$repos"
+          
+          # Convert to JSON array for matrix
+          repos_json=$(echo "$repos" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "repos=$repos_json" >> $GITHUB_OUTPUT
+
+      - name: Distribute workflow to repositories
+        if: steps.get-repos.outputs.repos != '[]'
+        run: |
+          repos='${{ steps.get-repos.outputs.repos }}'
+          
+          for repo in $(echo "$repos" | jq -r '.[]'); do
+            echo "Processing repository: $repo"
+            
+            # Skip this repository to avoid self-modification
+            if [ "$repo" = "simple-terraform-workflow" ]; then
+              echo "Skipping self (simple-terraform-workflow)"
+              continue
+            fi
+            
+            # Get the current terraform-workflow.yml content
+            workflow_content=$(base64 -w 0 terraform-workflow.yml)
+            
+            # Check if .github/workflows directory exists
+            workflows_dir_response=$(curl -s \
+              -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/workflows" \
+              -w "%{http_code}")
+            
+            workflows_dir_status="${workflows_dir_response: -3}"
+            
+            if [ "$workflows_dir_status" != "200" ]; then
+              echo "Creating .github/workflows directory in $repo"
+              
+              # Create .github directory first
+              curl -s \
+                -X PUT \
+                -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/.gitkeep" \
+                -d '{
+                  "message": "Create .github directory",
+                  "content": ""
+                }' > /dev/null
+              
+              # Create workflows directory
+              curl -s \
+                -X PUT \
+                -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/workflows/.gitkeep" \
+                -d '{
+                  "message": "Create workflows directory",
+                  "content": ""
+                }' > /dev/null
+            fi
+            
+            # Check if terraform-workflow.yml already exists
+            existing_file_response=$(curl -s \
+              -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/workflows/terraform-workflow.yml")
+            
+            existing_sha=$(echo "$existing_file_response" | jq -r '.sha // empty')
+            
+            if [ -n "$existing_sha" ]; then
+              echo "Updating existing terraform-workflow.yml in $repo"
+              # Update existing file
+              curl -s \
+                -X PUT \
+                -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/workflows/terraform-workflow.yml" \
+                -d "{
+                  \"message\": \"Update Terraform workflow from simple-terraform-workflow\",
+                  \"content\": \"$workflow_content\",
+                  \"sha\": \"$existing_sha\"
+                }"
+            else
+              echo "Creating new terraform-workflow.yml in $repo"
+              # Create new file
+              curl -s \
+                -X PUT \
+                -H "Authorization: token ${{ secrets.PERSONAL_ACCESS_TOKEN }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/amaranath-nagappa/$repo/contents/.github/workflows/terraform-workflow.yml" \
+                -d "{
+                  \"message\": \"Add Terraform workflow from simple-terraform-workflow\",
+                  \"content\": \"$workflow_content\"
+                }"
+            fi
+            
+            echo "Completed processing $repo"
+            sleep 1  # Rate limiting
+          done
+          
+          echo "Distribution complete!"
+
+      - name: Summary
+        run: |
+          echo "Terraform workflow distribution completed at $(date)"
+          echo "Processed repositories for user: amaranath-nagappa"
