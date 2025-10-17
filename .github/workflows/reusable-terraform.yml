@@ -17,6 +17,12 @@ on:
       AWS_ROLE_ARN:
         description: 'AWS IAM role ARN for authentication'
         required: false
+      AWS_ACCESS_KEY_ID:
+        description: 'AWS IAM role ARN for authentication'
+        required: false
+      AWS_SECRET_ACCESS_KEY:
+        description: 'AWS IAM role ARN for authentication'
+        required: false
       AWS_REGION:
         description: 'AWS region'
         required: false
@@ -65,7 +71,8 @@ jobs:
       uses: aws-actions/configure-aws-credentials@v4
       if: contains(github.repository, 'aws') || contains(github.event.head_commit.message, 'aws')
       with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         role-session-name: GitHubActions-${{ github.run_id }}
         aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
       continue-on-error: true
